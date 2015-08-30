@@ -54,9 +54,10 @@ int main() {
       break;
     }
 
+    namedWindow( face_window, WINDOW_FREERATIO );
+    
     // Apply the classifier to the frame, i.e. find face
     priorCenter = detectAndDisplay( frame, priorCenter );
-    cout << priorCenter << endl;
     
     if( waitKey(30) >= 0 ) { break; } // space
   }
@@ -65,27 +66,39 @@ int main() {
 
 Mat outputFrame( Mat frame, Point center, int w, int h) {
 
-  int x = center.x - w/2;
-  int y = center.y - 3*h/5;
+  int x = (center.x - w/2);
+  int y = (center.y - 3*h/5);
 
-  if(x > frame.size().width || x < 0 ||
-     y > frame.size().height || y < 0)
-    return frame(Rect(0, 0, w, h));
+  if(x > frame.size().width - 2 || x < 0 ||
+     y > frame.size().height - 2 || y < 0)
+    return frame(Rect(0, 0, 1, 1));
   
   // output frame of only face
   return frame(Rect(x, y, w, h));
+}
+
+// Rounds up
+int roundUp(int numToRound, int multiple) {
+  
+  if (multiple == 0)
+    return numToRound;
+
+  int remainder = abs(numToRound) % multiple;
+  if (remainder == 0)
+    return numToRound;
+  if (numToRound < 0)
+    return -(abs(numToRound) - remainder);
+  return numToRound + multiple - remainder;
 }
 
 // Detect face and display it
 Point detectAndDisplay( Mat frame, Point priorCenter) {
   
   std::vector<Rect> faces;
-  Mat frame_gray, frame_lab, output;
+  Mat frame_gray, frame_lab, output, temp;
 
-  output = frame;
-  
+  output = outputFrame( frame, priorCenter, 128, 128 );
   cvtColor( frame, frame_gray, COLOR_BGR2GRAY );
-
   equalizeHist( frame_gray, frame_gray );
 
   int minNeighbors = 2;
@@ -100,19 +113,29 @@ Point detectAndDisplay( Mat frame, Point priorCenter) {
     Point center( faces[i].x + faces[i].width/2,
 		  faces[i].y + faces[i].height/2 );
 
+    int w = 4 * roundUp(faces[i].width, frame.size().width / 5) / 5;
+    int h = roundUp(faces[i].height, frame.size().height / 5);
+
+    if(w < 100) { 
+      w = 125;
+      h = 150;
+    }
     
     if(abs(center.x - priorCenter.x) < frame.size().width / 5 &&
        abs(center.y - priorCenter.y) < frame.size().height / 5) {
 
+      if(abs(center.x - priorCenter.x) < 7 &&
+	 abs(center.y - priorCenter.y) < 7){
+	center = priorCenter;
+      }
+      
       center.x = (center.x + 2*priorCenter.x) / 3;
       center.y = (center.y + 2*priorCenter.y) / 3;
 
       priorCenter = center;
-
+      
       // output frame of only face
-      output = outputFrame(frame, center,
-			   frame.size().width / 3,
-			   frame.size().height / 2);
+      temp = outputFrame(frame, center, w, h);
                  
       break;
       
@@ -127,26 +150,24 @@ Point detectAndDisplay( Mat frame, Point priorCenter) {
       
       for( size_t j = 0; j < eyes.size(); j++ ) {
 	
-	Point eye_center( faces[i].x + eyes[j].x + eyes[j].width/2,
+        Point eye_center( faces[i].x + eyes[j].x + eyes[j].width/2,
 			  faces[i].y + eyes[j].y + eyes[j].height/2 );
-
 	priorCenter.x += eye_center.x;
-	priorCenter.y += eye_center.y;
-	
+	priorCenter.y += eye_center.y;	
       }
 
       // Use average location of eyes
       if(eyes.size() > 0) {
 	priorCenter.x = priorCenter.x / eyes.size();
 	priorCenter.y = priorCenter.y / eyes.size();
-
-	// output frame of only face
-	output = outputFrame(frame, priorCenter,
-			     frame.size().width / 3,
-			     frame.size().height / 2);
       }      
+      temp = outputFrame(frame, priorCenter, w, h);
     }
   }
+
+  // Check to see if new face found
+  if(temp.size().width > 2)
+    output = temp;
   
   // Display output
   imshow( display_window, frame );
