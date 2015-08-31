@@ -10,74 +10,56 @@ using namespace std;
 using namespace cv;
 
 /* Function Headers */
-Point detectAndDisplay( Mat frame, Point priorCenter );
+Point detectFace( Mat frame, Point priorCenter );
 
-/* Global variables */
-
-String face_cascade_name = "lbpcascade_frontalface.xml";
-String eyes_cascade_name = "haarcascade_eye_tree_eyeglasses.xml";
-
-CascadeClassifier face_cascade;
-CascadeClassifier eyes_cascade;
+CascadeClassifier face_cascade, eyes_cascade;
 
 String display_window = "Display";
 String face_window = "Face View";
 
-
 int main() {
-  VideoCapture cap;
+
+  VideoCapture cap(0); // capture from default camera
   Mat frame;
   Point priorCenter(0,0);
-  
-  // Load the cascades
-  if( !face_cascade.load( face_cascade_name ) ){
-    printf("Error loading face cascade\n");
-    return -1;
-  };
-  
-  if( !eyes_cascade.load( eyes_cascade_name ) ){
-    printf("Error loading eyes cascade\n");
-    return -1;
-  };
-  
-  // Read the video stream
-  cap.open( -1 );
-  if ( !cap.isOpened() ){
-    printf("Error opening video capture\n");
-    return -1;
-  }
 
+  face_cascade.load("haarcascade_frontalface_alt.xml"); // load face classifiers
+  eyes_cascade.load("haarcascade_eye_tree_eyeglasses.xml"); // load eye classifiers
+
+  namedWindow(face_window,
+	      CV_WINDOW_AUTOSIZE |
+	      CV_WINDOW_FREERATIO |
+	      CV_GUI_EXPANDED);
+  
   // Loop to capture frames
-  while (  cap.read(frame) ) {
-    if( frame.empty() ) {
-      printf("No captured frame -- Break!");
-      break;
-    }
+  while(cap.read(frame)) {
 
-    namedWindow( face_window, WINDOW_FREERATIO );
-    
     // Apply the classifier to the frame, i.e. find face
-    priorCenter = detectAndDisplay( frame, priorCenter );
+    priorCenter = detectFace(frame, priorCenter);
     
-    if( waitKey(30) >= 0 ) { break; } // space
+    if(waitKey(30) >= 0) // spacebar
+      break;
   }
   return 0;
 }
 
-Mat outputFrame( Mat frame, Point center, int w, int h) {
+/**
+ * Output a frame of only the the rectangle centered at point
+ */
+Mat outputFrame(Mat frame, Point center, int w, int h) {
 
   int x = (center.x - w/2);
   int y = (center.y - 3*h/5);
 
-  if(x > frame.size().width - 2 || x < 0 ||
-     y > frame.size().height - 2 || y < 0)
+  if(x + w > frame.size().width - 2 || x < 0 ||
+     y + h > frame.size().height - 2 || y < 0)
     return frame(Rect(0, 0, 1, 1));
   
   // output frame of only face
   return frame(Rect(x, y, w, h));
 }
 
-// Rounds up
+// Rounds up to multiple
 int roundUp(int numToRound, int multiple) {
   
   if (multiple == 0)
@@ -92,43 +74,50 @@ int roundUp(int numToRound, int multiple) {
 }
 
 // Detect face and display it
-Point detectAndDisplay( Mat frame, Point priorCenter) {
+Point detectFace(Mat frame, Point priorCenter) {
   
   std::vector<Rect> faces;
   Mat frame_gray, frame_lab, output, temp;
-
-  output = outputFrame( frame, priorCenter, 128, 128 );
-  cvtColor( frame, frame_gray, COLOR_BGR2GRAY );
-  equalizeHist( frame_gray, frame_gray );
-
+  int h = 2 * frame.size().height / 4;
+  int w = 3 * h / 5;
   int minNeighbors = 2;
+
+  // Generate output frame based on prior estimates
+  output = outputFrame(frame, priorCenter, w, h);
+
+  // Convert to gray for identifcations
+  cvtColor(frame, frame_gray, COLOR_BGR2GRAY);
+
+  // Equalize histogram (required for classifier
+  equalizeHist(frame_gray, frame_gray);
   
   // Detect face with open source cascade
-  face_cascade.detectMultiScale( frame_gray, faces,
-				 1.1, minNeighbors,
-				 0|CASCADE_SCALE_IMAGE, Size(30, 30) );
+  face_cascade.detectMultiScale(frame_gray, faces,
+				1.1, minNeighbors,
+				0|CASCADE_SCALE_IMAGE, Size(30, 30));
 
-  for( size_t i = 0; i < faces.size(); i++ ) {
+  // iterate over faces
+  for(size_t i = 0; i < faces.size(); i++) {
 
-    Point center( faces[i].x + faces[i].width/2,
-		  faces[i].y + faces[i].height/2 );
+    // Find center of face
+    Point center(faces[i].x + faces[i].width/2,
+		 faces[i].y + faces[i].height/2);
 
-    int w = 4 * roundUp(faces[i].width, frame.size().width / 5) / 5;
-    int h = roundUp(faces[i].height, frame.size().height / 5);
+    // Generate width and height of face, round to closest 1/4 of frame height
+    h = roundUp(faces[i].height, frame.size().height / 4);
+    w = 3 * h / 5;
 
-    if(w < 100) { 
-      w = 125;
-      h = 150;
-    }
-    
-    if(abs(center.x - priorCenter.x) < frame.size().width / 5 &&
-       abs(center.y - priorCenter.y) < frame.size().height / 5) {
+    // Check to see if it's the same user
+    if(abs(center.x - priorCenter.x) < frame.size().width / 6 &&
+       abs(center.y - priorCenter.y) < frame.size().height / 6) {
 
+      // Check to see if the user moved enough to update position
       if(abs(center.x - priorCenter.x) < 7 &&
 	 abs(center.y - priorCenter.y) < 7){
 	center = priorCenter;
       }
-      
+
+      // Smooth new center compared to old center
       center.x = (center.x + 2*priorCenter.x) / 3;
       center.y = (center.y + 2*priorCenter.y) / 3;
 
@@ -137,21 +126,25 @@ Point detectAndDisplay( Mat frame, Point priorCenter) {
       // output frame of only face
       temp = outputFrame(frame, center, w, h);
                  
-      break;
+      break; // exit, primary users face probably found
       
     } else {
 
-      Mat faceROI = frame_gray( faces[i] );
+      Mat face = frame_gray(faces[i]);
       std::vector<Rect> eyes;
       
       // Try to detect eyes, if no face is found
-      eyes_cascade.detectMultiScale( faceROI, eyes, 1.1, 2,
-				     0 |CASCADE_SCALE_IMAGE, Size(30, 30) );
-      
+      eyes_cascade.detectMultiScale(face, eyes, 1.1, 2,
+				    0 |CASCADE_SCALE_IMAGE, Size(30, 30) );
+
+      // Iterate over eyes
       for( size_t j = 0; j < eyes.size(); j++ ) {
-	
-        Point eye_center( faces[i].x + eyes[j].x + eyes[j].width/2,
-			  faces[i].y + eyes[j].y + eyes[j].height/2 );
+
+	// centerpoint of eyes
+        Point eye_center(faces[i].x + eyes[j].x + eyes[j].width/2,
+			 faces[i].y + eyes[j].y + eyes[j].height/2 );
+
+	// Average center of eyes
 	priorCenter.x += eye_center.x;
 	priorCenter.y += eye_center.y;	
       }
@@ -160,20 +153,27 @@ Point detectAndDisplay( Mat frame, Point priorCenter) {
       if(eyes.size() > 0) {
 	priorCenter.x = priorCenter.x / eyes.size();
 	priorCenter.y = priorCenter.y / eyes.size();
-      }      
+      }
+
+      // Generate temporary face location
       temp = outputFrame(frame, priorCenter, w, h);
     }
   }
 
   // Check to see if new face found
   if(temp.size().width > 2)
-    output = temp;
+    output = Mat(temp);
+  
+  // Display only face
+  imshow( face_window, output );
+
+  if(temp.size().width > 2)
+    // Draw ellipse around face
+    ellipse(frame, priorCenter, Size(w/2, h/2),
+	    0, 0, 360, Scalar( 255, 0, 255 ), 4, 8, 0);
   
   // Display output
   imshow( display_window, frame );
-
-  // Display only face
-  imshow( face_window, output );
   
   return priorCenter;
 }
